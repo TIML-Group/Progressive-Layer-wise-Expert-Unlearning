@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 import torchvision.transforms as transforms
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Dataset, Subset
 import torch.optim as optim
 from tqdm import tqdm
 import numpy as np
@@ -12,11 +12,14 @@ import time
 import os
 from try_moevit import MoEVisionTransformer  # 请替换为你的MoEVisionTransformer路径
 import pickle
+from PIL import Image
 
 ga_epoches = 10
 lr = 0.00005
 ckpt_path = "moevit_cifar100_super_best.pth"
 zl = 'fine'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = "/root/autodl-tmp/SEUF_MCU/data_cv/cifar-100-python"
 
 # ===================== 数据增强 =====================
 transform_train = transforms.Compose([
@@ -93,45 +96,83 @@ def compute_anchor_loss(g, target_expert_idx, num_experts):
     anchor_loss = torch.norm(g - a, p=2, dim=1).mean()
     return anchor_loss
 
+
+def load_cifar100_coarse(train_transform, test_transform):
+    meta_path = os.path.join(DATA_DIR, "meta")
+    train_path = os.path.join(DATA_DIR, "train")
+    test_path = os.path.join(DATA_DIR, "test")
+    required_files = [meta_path, train_path, test_path]
+    missing_files = [path for path in required_files if not os.path.exists(path)]
+    if missing_files:
+        missing_str = "\n".join(missing_files)
+        raise FileNotFoundError(
+            "Missing CIFAR100 local files:\n"
+            f"{missing_str}"
+        )
+
+    with open(train_path, 'rb') as f:
+        train_dict = pickle.load(f, encoding='latin1')
+    with open(test_path, 'rb') as f:
+        test_dict = pickle.load(f, encoding='latin1')
+
+    fine2coarse = {}
+    for fine_label, coarse_label in zip(train_dict['fine_labels'], train_dict['coarse_labels']):
+        fine2coarse[fine_label] = coarse_label
+    for fine_label, coarse_label in zip(test_dict['fine_labels'], test_dict['coarse_labels']):
+        fine2coarse.setdefault(fine_label, coarse_label)
+
+    class CIFAR100CoarseLocal(Dataset):
+        def __init__(self, split_dict, transform, fine2coarse_map):
+            self.images = split_dict['data'].reshape(-1, 3, 32, 32).transpose(0, 2, 3, 1)
+            self.fine_labels = split_dict['fine_labels']
+            self.fine2coarse = fine2coarse_map
+            self.transform = transform
+
+        def __len__(self):
+            return len(self.fine_labels)
+
+        def __getitem__(self, index):
+            image = Image.fromarray(self.images[index])
+            label = self.fine2coarse[self.fine_labels[index]]
+            if self.transform is not None:
+                image = self.transform(image)
+            return image, label
+
+    full_trainset = CIFAR100CoarseLocal(train_dict, train_transform, fine2coarse)
+    testset = CIFAR100CoarseLocal(test_dict, test_transform, fine2coarse)
+    return full_trainset, testset
+
 # ===================== 主函数 =====================
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     # ==== 数据集划分 ====
-    split_dir = "split_results_cifar100_" + zl
+    split_dir = os.path.join(BASE_DIR, "split_results_cifar100_" + zl)
     forget_file_train = 'forget_indices_' + zl + '_train.npy'
     retain_file_train = 'retain_indices_' + zl + '_train.npy'
     forget_file_test = 'forget_indices_' + zl + '_test.npy'
     retain_file_test = 'retain_indices_' + zl + '_test.npy'
+    ckpt_full_path = os.path.join(BASE_DIR, ckpt_path)
+
+    required_split_files = [
+        os.path.join(split_dir, forget_file_train),
+        os.path.join(split_dir, retain_file_train),
+        os.path.join(split_dir, forget_file_test),
+        os.path.join(split_dir, retain_file_test),
+    ]
+    missing_split_files = [path for path in required_split_files if not os.path.exists(path)]
+    if missing_split_files:
+        missing_str = "\n".join(missing_split_files)
+        raise FileNotFoundError(
+            "Missing forget/retain split files:\n"
+            f"{missing_str}\n"
+            "Please generate them first, e.g. run "
+            f"`python {os.path.join(BASE_DIR, 'subclass_100.py')}`."
+        )
 
     # ==== 加载 CIFAR100 coarse labels ====
-    try:
-        full_trainset = torchvision.datasets.CIFAR100(root="./data", train=True, download=True,
-                                                      transform=transform_train, target_type='coarse')
-        testset = torchvision.datasets.CIFAR100(root="./data", train=False, download=True,
-                                                transform=transform_test, target_type='coarse')
-    except TypeError:
-        # fallback to fine->coarse 手动映射
-        with open('./data/cifar-100-python/meta', 'rb') as f:
-            meta = pickle.load(f, encoding='latin1')
-        with open('./data/cifar-100-python/train', 'rb') as f:
-            train_dict = pickle.load(f, encoding='latin1')
-        fine2coarse = {fin: coar for fin, coar in zip(train_dict['fine_labels'], train_dict['coarse_labels'])}
-
-        class CIFAR100_Coarse(torchvision.datasets.CIFAR100):
-            def __init__(self, *args, fine2coarse_map=None, **kwargs):
-                super().__init__(*args, **kwargs)
-                self._fine2coarse = fine2coarse_map
-
-            def __getitem__(self, index):
-                img, fine_target = super().__getitem__(index)
-                return img, self._fine2coarse[fine_target]
-
-        full_trainset = CIFAR100_Coarse(root="./data", train=True, transform=transform_train,
-                                        fine2coarse_map=fine2coarse)
-        testset = CIFAR100_Coarse(root="./data", train=False, transform=transform_test,
-                                  fine2coarse_map=fine2coarse)
+    full_trainset, testset = load_cifar100_coarse(transform_train, transform_test)
 
     forget_train = Subset(full_trainset, np.load(os.path.join(split_dir, forget_file_train)))
     retain_train = Subset(full_trainset, np.load(os.path.join(split_dir, retain_file_train)))
@@ -148,11 +189,11 @@ def main():
         img_size=32, patch_size=4, embed_dim=128, depth=8, num_heads=4, num_classes=20
     ).to(device)
 
-    if not os.path.exists(ckpt_path):
-        raise FileNotFoundError(f"Checkpoint {ckpt_path} not found")
+    if not os.path.exists(ckpt_full_path):
+        raise FileNotFoundError(f"Checkpoint {ckpt_full_path} not found")
 
     # ======= 修改这里，兼容 checkpoint =======
-    checkpoint = torch.load(ckpt_path, map_location=device)
+    checkpoint = torch.load(ckpt_full_path, map_location=device)
     if 'model_state_dict' in checkpoint:
         state_dict = checkpoint['model_state_dict']
     else:
@@ -166,7 +207,7 @@ def main():
         model.load_state_dict(state_dict, strict=False)
 
     model.eval()
-    print(f"Loaded initial model from {ckpt_path}")
+    print(f"Loaded initial model from {ckpt_full_path}")
 
     # ==== 评估函数 ====
     def evaluate(loader):

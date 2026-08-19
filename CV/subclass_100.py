@@ -3,6 +3,8 @@ import torchvision.transforms as transforms
 import os
 import numpy as np
 
+DATA_ROOT = "/root/autodl-tmp/SEUF_MCU/data_cv"
+
 # CIFAR-100 大类划分（原始）
 CIFAR100_SUPERCLASS = {
     'aquatic_mammals': ['beaver', 'dolphin', 'otter', 'seal', 'whale'],
@@ -35,8 +37,8 @@ def load_cifar100():
         transforms.Normalize((0.5071, 0.4867, 0.4408),
                              (0.2675, 0.2565, 0.2761)),
     ])
-    trainset = torchvision.datasets.CIFAR100(root='./data', train=True, download=True, transform=transform)
-    testset = torchvision.datasets.CIFAR100(root='./data', train=False, download=True, transform=transform)
+    trainset = torchvision.datasets.CIFAR100(root=DATA_ROOT, train=True, download=True, transform=transform)
+    testset = torchvision.datasets.CIFAR100(root=DATA_ROOT, train=False, download=True, transform=transform)
     return trainset, testset
 
 
@@ -58,8 +60,8 @@ def split_by_fineclass(dataset, forget_class_names, save_dir, split_name="train"
         else:
             retain_indices.append(i)
 
-    np.save(os.path.join(save_dir, f'forget_indices_{split_name}.npy'), forget_indices)
-    np.save(os.path.join(save_dir, f'retain_indices_{split_name}.npy'), retain_indices)
+    np.save(os.path.join(save_dir, f'forget_indices_fine_{split_name}.npy'), forget_indices)
+    np.save(os.path.join(save_dir, f'retain_indices_fine_{split_name}.npy'), retain_indices)
 
     print(f"[{split_name}] 划分完成：遗忘集 {len(forget_indices)}，保留集 {len(retain_indices)}")
     print(f"结果保存在 {save_dir}\n")

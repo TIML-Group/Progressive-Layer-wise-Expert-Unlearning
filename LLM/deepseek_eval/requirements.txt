@@ -1,6 +1,7 @@
 torch>=2.1.0
-transformers>=4.30.0,<4.40.0
+transformers==4.36.2
 datasets>=2.18.0
 rouge-score>=0.1.2
 tqdm>=4.66.0
-
+peft>=0.11.0
+accelerate>=0.30.0
