@@ -1,0 +1,24 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Logs / results
+*.log
+*.out
+*.json
+
+# Datasets
+data_cv/
+CV/data/
+CV/split_results_cifar100_fine/
+split_results_cifar100_fine/
+
+# Model checkpoints / weights
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.bin
+
+# Autodl
+.autodl/
