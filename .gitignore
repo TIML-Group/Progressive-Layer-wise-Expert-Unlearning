@@ -9,6 +9,7 @@ __pycache__/
 
 # Datasets
 data_cv/
+CV/imagenet100/model/
 CV/data/
 CV/split_results_cifar100_fine/
 split_results_cifar100_fine/
