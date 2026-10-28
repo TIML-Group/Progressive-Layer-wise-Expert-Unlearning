@@ -1,25 +1,18 @@
-# Python cache
 __pycache__/
 *.pyc
-
-# Logs / results
+.pytest_cache/
+logs/
 *.log
 *.out
-*.json
 
-# Datasets
-data_cv/
-CV/imagenet100/model/
+# data, models and results (kept outside git)
 CV/data/
-CV/split_results_cifar100_fine/
-split_results_cifar100_fine/
-
-# Model checkpoints / weights
+CV/outputs/
+LLM/data/
+LLM/models/
+LLM/outputs/
 *.pth
 *.pt
 *.ckpt
 *.safetensors
 *.bin
-
-# Autodl
-.autodl/

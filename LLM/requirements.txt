@@ -1,0 +1,12 @@
+torch>=2.1
+transformers>=4.40  # Qwen2-MoE; DeepSeek-V2 remote code runs through pleu_llm.modeling.patch_transformers_compat
+accelerate>=0.30
+peft>=0.11
+datasets>=2.18
+safetensors
+huggingface_hub
+rouge-score>=0.1.2
+tqdm
+numpy
+openai  # generate_relearn_data.py only
+pytest

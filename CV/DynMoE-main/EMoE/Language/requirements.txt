@@ -1,6 +1,0 @@
-k_means_constrained
-peft
-transformers==4.31.0
-datasets
-evaluate
-accelerate
