@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 
 from pleu_llm.data import DEFAULT_OUTPUT_ROOT
-from pleu_llm.modeling import MODEL_IDS
+from pleu_llm.common import model_key
 
 ORDER = ["base", "ga", "seuf_ga", "neggrad_plus", "seuf_neggrad_plus", "mcu", "pleu",
          "pleu_no_lteu", "pleu_no_idff", "pleu_no_sepo"]
@@ -32,7 +32,7 @@ def main():
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     args = parser.parse_args()
 
-    key = Path(args.model).name if Path(args.model).is_dir() else MODEL_IDS.get(args.model, args.model).split("/")[-1]
+    key = model_key(args.model)
     root = args.output_root / key / args.forget_dataset
     rows = defaultdict(lambda: defaultdict(list))
     for run in sorted(p for p in root.iterdir() if p.is_dir()):

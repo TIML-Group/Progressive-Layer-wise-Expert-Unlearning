@@ -80,9 +80,7 @@ def input_device(model):
 class MoELayer:
     layer_idx: int
     prefix: str            # e.g. "model.layers.3.mlp."
-    block: nn.Module
     router: nn.Module      # module with ``weight`` [num_experts, hidden]
-    num_experts: int
     top_k: int
 
     def expert_prefix(self, expert_idx):
@@ -111,7 +109,7 @@ def moe_layers(model) -> List[MoELayer]:
         if block is None or not hasattr(block, "experts") or not hasattr(block, "gate"):
             continue
         top_k = getattr(block, "top_k", None) or getattr(block, "num_experts_per_tok", None) or block.gate.top_k
-        layers.append(MoELayer(layer_idx, names[block] + ".", block, block.gate, len(block.experts), int(top_k)))
+        layers.append(MoELayer(layer_idx, names[block] + ".", block.gate, int(top_k)))
     if not layers:
         raise RuntimeError("Model has no routed MoE layer.")
     return layers

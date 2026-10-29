@@ -18,7 +18,6 @@ DEFAULT_DATA_ROOT = Path(os.environ.get("PLEU_CV_DATA", CV_DIR / "data"))
 DEFAULT_OUTPUT_ROOT = Path(os.environ.get("PLEU_CV_OUTPUT", CV_DIR / "outputs"))
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 SPLIT_MODES = ("class", "random")
-SPLIT_PARTS = ("forget_train", "retain_train", "forget_test", "retain_test")
 
 CIFAR100_MEAN = (0.5071, 0.4867, 0.4408)
 CIFAR100_STD = (0.2675, 0.2565, 0.2761)
@@ -97,11 +96,10 @@ def build_transforms(dataset_name, image_size=None):
 
 
 class ImageListDataset(Dataset):
-    """(path, label) list dataset; exposes ``targets`` like torchvision datasets."""
+    """Dataset over a list of (image path, label)."""
 
     def __init__(self, samples, transform):
         self.samples = [(str(path), int(label)) for path, label in samples]
-        self.targets = [label for _, label in self.samples]
         self.transform = transform
 
     def __len__(self):

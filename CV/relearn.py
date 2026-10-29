@@ -41,7 +41,7 @@ def main():
     if args.model_path is None:
         if args.method is None:
             parser.error("give --method or --model-path")
-        args.model_path = model_path(args.method, args)
+        args.model_path = args.origin_path if args.method == "origin" else model_path(args.method, args)
     label = args.method or "custom"
 
     set_seed(args.seed)

@@ -16,7 +16,7 @@ import numpy as np
 import torch
 
 from .data import DEFAULT_DATA_ROOT, DEFAULT_OUTPUT_ROOT, FORGET_DATASETS
-from .modeling import DEFAULT_MODEL_ROOT, load_model_and_tokenizer, resolve_model_path
+from .modeling import DEFAULT_MODEL_ROOT, MODEL_IDS, load_model_and_tokenizer, resolve_model_path
 
 CHECKPOINT_FILE = "pleu_checkpoint.json"
 
@@ -52,13 +52,14 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def model_key(args):
-    return Path(args.model).name if Path(args.model).is_dir() else args.model.split("/")[-1]
+def model_key(model):
+    """Output folder name of a model: local directory name or the HF repo name."""
+    return Path(model).name if Path(model).is_dir() else MODEL_IDS.get(model, model).split("/")[-1]
 
 
 def run_dir(method, args):
     name = f"{method}_s{args.seed}" + (f"_{args.tag}" if args.tag else "")
-    return Path(args.output_root) / model_key(args) / args.forget_dataset / name
+    return Path(args.output_root) / model_key(args.model) / args.forget_dataset / name
 
 
 def write_results(path, method, args, payload):

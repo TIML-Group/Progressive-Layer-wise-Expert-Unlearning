@@ -24,6 +24,7 @@ from pleu_llm.evaluation import add_eval_args, evaluate_fe_ut
 from pleu_llm.masks import mcu_tensor_mask, mean_gradients
 from pleu_llm.modeling import input_device, load_model_and_tokenizer, resolve_model_path
 from pleu_llm.routing import select_t
+from pleu_llm.training import Accumulator
 from unlearn_pleu import add_curve_args, prepare_texts
 
 
@@ -74,18 +75,16 @@ def main():
     del end
     params = curve.trainable_parameters()
     optimizer = torch.optim.SGD(params, lr=args.learning_rate, momentum=args.momentum)
+    acc = Accumulator(params, optimizer, None, args.grad_accum_steps, args.max_grad_norm)
     retain_iter = cycle(make_loader(retain_set, tokenizer, args.batch_size, True))
+    forget_loader = make_loader(forget_set, tokenizer, args.batch_size, True)
     model.train()
     for epoch in range(args.num_epochs):
-        for batch in tqdm(make_loader(forget_set, tokenizer, args.batch_size, True), desc=f"MCU epoch {epoch + 1}"):
+        for step, batch in enumerate(tqdm(forget_loader, desc=f"MCU epoch {epoch + 1}"), start=1):
             curve.set_t(random.random())
             loss = (lm_loss(model, to_device(next(retain_iter), device))
                     - args.beta * lm_loss(model, to_device(batch, device)))
-            optimizer.zero_grad(set_to_none=True)
-            if torch.isfinite(loss):
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(params, args.max_grad_norm)
-                optimizer.step()
+            acc.backward(loss, last=step == len(forget_loader))
 
     holdout = lambda texts: list(make_loader(TextDataset(texts, tokenizer, args.cutoff_len),  # noqa: E731
                                              tokenizer, args.batch_size, False))

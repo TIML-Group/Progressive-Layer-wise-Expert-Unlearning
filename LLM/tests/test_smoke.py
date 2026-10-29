@@ -101,8 +101,8 @@ def pipeline(model_dir, tmp):
         run("unlearn_pleu.py", model_dir, tmp, *curve, "--ablation", ablation)
     run("unlearn_mcu.py", model_dir, tmp, *curve, "--mask-max-batches", "2")
     run("relearn.py", model_dir, tmp, "--method", "pleu", "--steps", "2", "--relearn-data", str(tmp / "relearn.jsonl"))
-    run("relearn.py", model_dir, tmp, "--method", "mcu", "--steps", "2", "--lora", "--relearn-data",
-        str(tmp / "relearn.jsonl"))
+    run("relearn.py", model_dir, tmp, "--method", "mcu", "--steps", "2", "--gradient-checkpointing",
+        "--relearn-data", str(tmp / "relearn.jsonl"))
 
     runs = tmp / "out" / model_dir.name / "wmdp"
     pleu = json.loads((runs / "pleu_s123" / "results.json").read_text())

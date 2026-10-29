@@ -31,6 +31,7 @@ from pleu_llm.modeling import (
     resolve_model_path, router_param_names, routing_distance,
 )
 from pleu_llm.routing import assign_samples, layer_targets, sample_routing_weights, select_t
+from pleu_llm.training import Accumulator
 
 ABLATIONS = ("none", "no_lteu", "no_idff", "no_sepo")
 
@@ -132,22 +133,19 @@ def main():
             param.requires_grad_(True)
         params = curve.trainable_parameters() + routers
         optimizer = torch.optim.SGD(params, lr=args.learning_rate, momentum=args.momentum)
+        acc = Accumulator(params, optimizer, None, args.grad_accum_steps, args.max_grad_norm)
         loader = make_loader(IndexedSubset(forget_set, assignment[l]), tokenizer, args.batch_size, True)
         model.train()
         for epoch in range(args.num_epochs):
-            for batch in tqdm(loader, desc=f"layer {l} epoch {epoch + 1}", leave=False):
+            for step, batch in enumerate(tqdm(loader, desc=f"layer {l} epoch {epoch + 1}", leave=False), start=1):
                 curve.set_t(random.random())
                 batch = to_device(batch, device)
                 loss_retain = lm_loss(model, to_device(next(retain_iter), device))
                 with RouterRecorder(model, [l]) as recorder:
                     loss_forget = lm_loss(model, batch)
                     loss_dist = routing_distance(recorder.probs[l], batch["attention_mask"], [e])
-                loss = loss_retain - args.beta * loss_forget + args.alpha * loss_dist
-                optimizer.zero_grad(set_to_none=True)
-                if torch.isfinite(loss):
-                    loss.backward()
-                    torch.nn.utils.clip_grad_norm_(params, args.max_grad_norm)
-                    optimizer.step()
+                acc.backward(loss_retain - args.beta * loss_forget + args.alpha * loss_dist,
+                             last=step == len(loader))
         t_best, table = select_t(model, curve, t_grid, holdout_f, holdout_r, args.retain_tol)
         stats[l].update({"t": t_best, "t_selection": table, "num_trainable": curve.num_trainable()})
         curve.bake(t_best)

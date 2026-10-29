@@ -5,9 +5,6 @@ import math
 import torch
 from transformers import get_linear_schedule_with_warmup
 
-# Same target set as the original GA / NegGrad+ scripts.
-LORA_TARGETS = {"q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "w1", "w2", "w3"}
-
 
 def add_optim_args(parser, lr, epochs=1):
     parser.add_argument("--learning-rate", type=float, default=lr)
@@ -30,28 +27,6 @@ def enable_full_training(model, args):
         model.gradient_checkpointing_enable()
         if hasattr(model, "enable_input_require_grads"):
             model.enable_input_require_grads()
-
-
-def add_lora_args(parser):
-    parser.add_argument("--lora-rank", type=int, default=16)
-    parser.add_argument("--lora-alpha", type=int, default=32)
-    parser.add_argument("--lora-dropout", type=float, default=0.05)
-
-
-def lora_target_modules(model):
-    suffixes = {name.split(".")[-1] for name, module in model.named_modules()
-                if isinstance(module, torch.nn.Linear) and not name.endswith("lm_head")}
-    return sorted(LORA_TARGETS & suffixes) or sorted(suffixes)
-
-
-def apply_lora(model, args):
-    from peft import LoraConfig, TaskType, get_peft_model
-
-    config = LoraConfig(r=args.lora_rank, lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout,
-                        bias="none", task_type=TaskType.CAUSAL_LM, target_modules=lora_target_modules(model))
-    model = get_peft_model(model, config)
-    model.print_trainable_parameters()
-    return model
 
 
 def build_optimizer(params, args, steps_per_epoch):

@@ -14,7 +14,7 @@
 | `unlearn_baseline.py` | GA and NegGrad+ on all parameters; `--seuf` trains only the selected expert(s) and router(s) (`--seuf-experts N`, `--seuf-layerwise`) |
 | `unlearn_mcu.py` | MCU: Bézier curve on every weight towards the NegGrad+ model, MCU tensor mask |
 | `unlearn_pleu.py` | PLEU; `--ablation no_lteu \| no_idff \| no_sepo` |
-| `relearn.py` | 10 full-parameter fine-tuning steps on benign text (`--lora` for adapters), then FE / UT |
+| `relearn.py` | 10 full-parameter fine-tuning steps on benign text, then FE / UT |
 | `generate_relearn_data.py` | benign relearning corpus from any OpenAI-compatible endpoint, filtered against the forget set |
 | `summarize.py` | Table 3 rows as mean ± std over seeds |
 | `scripts/run_all.sh`, `scripts/run.sbatch` | the whole pipeline, locally or on Slurm |
