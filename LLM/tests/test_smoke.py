@@ -118,6 +118,17 @@ def pipeline(model_dir, tmp):
     assert any("self_attn" in k for k in full) and any("embed_tokens" in k for k in full), "full-model NegGrad+"
 
 
+def test_idff_assignment():
+    from pleu_llm.routing import assign_samples
+
+    weights = {1: torch.tensor([[0.9, 0.1], [0.2, 0.8], [0.3, 0.7]]),
+               3: torch.tensor([[0.1, 0.9], [0.6, 0.4], [0.2, 0.8]])}
+    assignment, unassigned = assign_samples(weights, {1: 0, 3: 0}, {1: 1, 3: 1})
+    assert assignment == {1: [0], 3: [1]} and unassigned == [2]
+    every, rest = assign_samples(weights, {1: 0, 3: 0}, {1: 1, 3: 1}, filtering=False)
+    assert every == {1: [0, 1, 2], 3: [0, 1, 2]} and rest == []
+
+
 def test_scorer_and_curve(tmp_path):
     from pleu_llm.curve import ParamCurve
     from pleu_llm.evaluation import Scorer

@@ -47,19 +47,20 @@ def global_targets(weights, num_experts=1):
     return OrderedDict(sorted(chosen.items())), rel
 
 
-def assign_samples(weights, targets, top_k, exclusive=True):
-    """IDFF: each sample goes to the first layer whose top-K (token-averaged) experts contain the target."""
+def assign_samples(weights, targets, top_k, filtering=True):
+    """IDFF: each sample goes to the first layer whose top-K (token-averaged) experts contain the target.
+    ``filtering=False`` (w/o-IDFF ablation) uses the whole forget set at every layer."""
     num = next(iter(weights.values())).size(0)
+    if not filtering:
+        return OrderedDict((layer_idx, list(range(num))) for layer_idx in targets), []
     remaining = torch.ones(num, dtype=torch.bool)
     assignment = OrderedDict()
     for layer_idx, target in targets.items():
         routed = (weights[layer_idx].topk(top_k[layer_idx], dim=-1).indices == target).any(dim=-1)
-        matched = routed & remaining if exclusive else routed
+        matched = routed & remaining
         assignment[layer_idx] = matched.nonzero(as_tuple=True)[0].tolist()
-        if exclusive:
-            remaining &= ~matched
-    unassigned = remaining.nonzero(as_tuple=True)[0].tolist() if exclusive else []
-    return assignment, unassigned
+        remaining &= ~matched
+    return assignment, remaining.nonzero(as_tuple=True)[0].tolist()
 
 
 @torch.no_grad()
@@ -70,12 +71,15 @@ def mean_loss(model, batches):
 
 
 @torch.no_grad()
-def select_t(model, curve, t_values, forget_batches, retain_batches, retain_tol):
+def select_t(model, curve, t_values, forget_batches, retain_batches, retain_tol, base_retain=None):
     """Pick t on the curve: the largest held-out forget loss among points whose retain loss
-    stays within ``retain_tol`` (relative) of the starting model; otherwise the lowest retain loss."""
+    stays within ``retain_tol`` (relative) of ``base_retain``; otherwise the lowest retain loss.
+    ``base_retain`` defaults to the curve start (t=0); PLEU passes the original model's loss so
+    the tolerance does not compound over the layers."""
     model.eval()
-    curve.set_t(0.0)
-    base_retain = mean_loss(model, retain_batches)
+    if base_retain is None:
+        curve.set_t(0.0)
+        base_retain = mean_loss(model, retain_batches)
     table = []
     for t in t_values:
         curve.set_t(t)

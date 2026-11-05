@@ -31,7 +31,8 @@ def enable_full_training(model, args):
 
 def build_optimizer(params, args, steps_per_epoch):
     optimizer = torch.optim.AdamW(params, lr=args.learning_rate, weight_decay=args.weight_decay)
-    total = max(1, math.ceil(steps_per_epoch * args.num_epochs / args.grad_accum_steps))
+    # the Accumulator also steps on the last micro-batch of every epoch
+    total = max(1, args.num_epochs * math.ceil(steps_per_epoch / args.grad_accum_steps))
     scheduler = get_linear_schedule_with_warmup(optimizer, int(total * args.warmup_ratio), total)
     return optimizer, scheduler
 
@@ -46,14 +47,15 @@ class Accumulator:
         optimizer.zero_grad(set_to_none=True)
 
     def backward(self, loss, last=False):
-        if not torch.isfinite(loss):
+        finite = bool(torch.isfinite(loss))
+        if finite:
+            (loss / self.accum_steps).backward()
+            self.micro += 1
+        else:
             self.skipped += 1
-            return False
-        (loss / self.accum_steps).backward()
-        self.micro += 1
-        if self.micro % self.accum_steps == 0 or last:
+        if self.micro and (self.micro == self.accum_steps or last):
             self.step()
-        return True
+        return finite
 
     def step(self):
         torch.nn.utils.clip_grad_norm_(self.params, self.max_grad_norm)
@@ -61,3 +63,4 @@ class Accumulator:
         if self.scheduler is not None:
             self.scheduler.step()
         self.optimizer.zero_grad(set_to_none=True)
+        self.micro = 0  # micro-batches accumulated since the last step

@@ -123,24 +123,23 @@ def routed_to_target(weights, target_idx, top_k):
     return (topk == target_idx).any(dim=-1)
 
 
-def assign_samples_to_layers(sample_weights, layer_targets, top_k, exclusive=True):
+def assign_samples_to_layers(sample_weights, layer_targets, top_k, filtering=True):
     """IDFF (Eq. 3.5): assign each forget sample to the first layer that routes it to its target.
 
     Returns ({layer_idx: LongTensor of sample positions}, unassigned positions).
-    With ``exclusive=False`` (w/o-IDFF ablation) every layer receives all samples
-    routed to its target expert, so samples can drive several layers.
+    With ``filtering=False`` (w/o-IDFF ablation) the whole forget set is used at every layer.
     """
     num_samples = next(iter(sample_weights.values())).size(0)
+    if not filtering:
+        every = torch.arange(num_samples)
+        return OrderedDict((layer_idx, every.clone()) for layer_idx in layer_targets), torch.empty(0, dtype=torch.long)
     remaining = torch.ones(num_samples, dtype=torch.bool)
     assignment = OrderedDict()
     for layer_idx, target_idx in layer_targets.items():
-        routed = routed_to_target(sample_weights[layer_idx], target_idx, top_k[layer_idx])
-        matched = routed & remaining if exclusive else routed
+        matched = routed_to_target(sample_weights[layer_idx], target_idx, top_k[layer_idx]) & remaining
         assignment[layer_idx] = matched.nonzero(as_tuple=True)[0]
-        if exclusive:
-            remaining &= ~matched
-    unassigned = remaining.nonzero(as_tuple=True)[0] if exclusive else torch.empty(0, dtype=torch.long)
-    return assignment, unassigned
+        remaining &= ~matched
+    return assignment, remaining.nonzero(as_tuple=True)[0]
 
 
 def routing_distance(gate_probs, target_experts):

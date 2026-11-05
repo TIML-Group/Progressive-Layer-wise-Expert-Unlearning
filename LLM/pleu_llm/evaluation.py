@@ -98,6 +98,8 @@ class Scorer:
         messages = [{"role": "user", "content": content}]
         if getattr(self.tokenizer, "chat_template", None):
             ids = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=True)
+            if not isinstance(ids, list):  # BatchEncoding in newer transformers
+                ids = ids["input_ids"]
         else:
             ids = self.tokenizer(f"user: {content}\nassistant:", add_special_tokens=True)["input_ids"]
         return torch.tensor([ids], dtype=torch.long, device=self.device)

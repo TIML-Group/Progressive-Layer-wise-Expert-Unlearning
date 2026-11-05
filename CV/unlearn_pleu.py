@@ -13,7 +13,7 @@
 
     python unlearn_pleu.py --split-mode class
     python unlearn_pleu.py --split-mode class --ablation no_lteu   # random expert per layer
-    python unlearn_pleu.py --split-mode class --ablation no_idff   # no inter-layer filtering
+    python unlearn_pleu.py --split-mode class --ablation no_idff   # whole forget set at every layer
     python unlearn_pleu.py --split-mode class --ablation no_sepo   # update the whole expert
 """
 
@@ -64,7 +64,7 @@ def localize(args, model, subsets, indices, eval_loaders, trainset_eval, retain_
     strategy = "random" if args.ablation == "no_lteu" else "relevance"
     targets, relevance = select_layer_targets(weights, strategy, args.seed)
     top_k = {layer_idx: k for layer_idx, _, k in moe_layers(model)}
-    assignment, unassigned = assign_samples_to_layers(weights, targets, top_k, exclusive=args.ablation != "no_idff")
+    assignment, unassigned = assign_samples_to_layers(weights, targets, top_k, filtering=args.ablation != "no_idff")
     if args.unassigned == "last" and len(unassigned) > 0:
         last = next(reversed(assignment))
         assignment[last] = torch.cat([assignment[last], unassigned]).sort().values

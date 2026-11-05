@@ -40,8 +40,8 @@ def test_idff_assigns_first_matching_layer():
     assert assignment[1].tolist() == [0]
     assert assignment[3].tolist() == [1]
     assert unassigned.tolist() == [2]
-    shared, _ = assign_samples_to_layers(weights, targets, {1: 1, 3: 1}, exclusive=False)
-    assert shared[3].tolist() == [1]
+    shared, rest = assign_samples_to_layers(weights, targets, {1: 1, 3: 1}, filtering=False)
+    assert shared[1].tolist() == shared[3].tolist() == [0, 1, 2] and rest.numel() == 0
 
 
 def test_sepo_mask_protects_retain_entries():

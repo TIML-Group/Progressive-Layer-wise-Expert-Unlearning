@@ -30,7 +30,7 @@ from pleu_llm.modeling import (
     RouterRecorder, expert_param_names, input_device, load_model_and_tokenizer, moe_layers,
     resolve_model_path, router_param_names, routing_distance,
 )
-from pleu_llm.routing import assign_samples, layer_targets, sample_routing_weights, select_t
+from pleu_llm.routing import assign_samples, layer_targets, mean_loss, sample_routing_weights, select_t
 from pleu_llm.training import Accumulator
 
 ABLATIONS = ("none", "no_lteu", "no_idff", "no_sepo")
@@ -50,7 +50,7 @@ def add_curve_args(parser, lr, epochs):
     parser.add_argument("--t-grid", default="0.5,0.6,0.7,0.8,0.9,1.0")
     parser.add_argument("--holdout", type=int, default=32, help="Held-out forget/retain texts for choosing t")
     parser.add_argument("--retain-tol", type=float, default=0.05,
-                        help="Max relative increase of held-out retain loss when choosing t")
+                        help="Max relative increase of held-out retain loss over the original model when choosing t")
 
 
 def prepare_texts(args):
@@ -86,13 +86,15 @@ def main():
     batches = lambda texts: list(make_loader(TextDataset(texts, tokenizer, args.cutoff_len),  # noqa: E731
                                              tokenizer, args.batch_size, False))
     holdout_f, holdout_r = batches(forget_holdout), batches(retain_holdout)
+    model.eval()
+    base_retain = mean_loss(model, holdout_r)  # retain-loss reference of the original model for every t^(l)
 
     # ---- LTEU + IDFF on the original model
     layers = {layer.layer_idx: layer for layer in moe_layers(model)}
     weights = sample_routing_weights(model, make_loader(forget_set, tokenizer, args.batch_size, False))
     targets, rel = layer_targets(weights, "random" if args.ablation == "no_lteu" else "relevance", args.seed)
     assignment, unassigned = assign_samples(weights, targets, {l: layers[l].top_k for l in targets},
-                                            exclusive=args.ablation != "no_idff")
+                                            filtering=args.ablation != "no_idff")
     if args.unassigned == "last" and unassigned:
         assignment[next(reversed(assignment))] += unassigned
     names = {l: expert_param_names(model, layers[l], e) for l, e in targets.items()}
@@ -146,7 +148,7 @@ def main():
                     loss_dist = routing_distance(recorder.probs[l], batch["attention_mask"], [e]).to(loss_forget.device)
                 acc.backward(loss_retain - args.beta * loss_forget + args.alpha * loss_dist,
                              last=step == len(loader))
-        t_best, table = select_t(model, curve, t_grid, holdout_f, holdout_r, args.retain_tol)
+        t_best, table = select_t(model, curve, t_grid, holdout_f, holdout_r, args.retain_tol, base_retain)
         stats[l].update({"t": t_best, "t_selection": table, "num_trainable": curve.num_trainable()})
         curve.bake(t_best)
         for param in routers:
@@ -157,7 +159,8 @@ def main():
     keep = {n for l in targets for n in names[l] + router_param_names(model, layers[l])}
     changed = {n: p for n, p in model.named_parameters() if n in keep}
     save_delta(out_dir, base_path, changed, method=name, endpoint=args.endpoint, layer_targets=dict(targets))
-    results = {"time_min": minutes, "num_unassigned": len(unassigned), "layers": stats, "checkpoint": str(out_dir)}
+    results = {"time_min": minutes, "num_unassigned": len(unassigned), "base_retain_loss": base_retain,
+               "layers": stats, "checkpoint": str(out_dir)}
     if not args.skip_eval:
         results.update(evaluate_fe_ut(model, tokenizer, args))
     write_results(out_dir / "results.json", name, args, results)

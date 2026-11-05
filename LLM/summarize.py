@@ -37,13 +37,16 @@ def main():
     rows = defaultdict(lambda: defaultdict(list))
     for run in sorted(p for p in root.iterdir() if p.is_dir()):
         method = re.sub(r"_s\d+(_.*)?$", "", run.name)
+        found = {}  # one value per run; results.json wins over a later evaluate.py run
         for filename, prefix in (("results.json", ""), ("eval_results.json", ""), ("relearn_results.json", "re_")):
             path = run / filename
             if path.exists():
                 payload = json.loads(path.read_text(encoding="utf-8"))
-                for metric in ("fe", "ut", "time_min"):
-                    if metric in payload and not (prefix and metric == "time_min"):
-                        rows[method][prefix + metric].append(payload[metric])
+                for metric in ("fe", "ut") + (() if prefix else ("time_min",)):
+                    if metric in payload:
+                        found.setdefault(prefix + metric, payload[metric])
+        for metric, value in found.items():
+            rows[method][metric].append(value)
 
     print(f"{key} / {args.forget_dataset}")
     print("| Method | FE | UT | Time (min) | FE (relearn) | UT (relearn) |")
