@@ -99,8 +99,10 @@ def main():
             batch = to_device(batch, device)
             with RouterRecorder(model, list(targets) if targets else []) as recorder:
                 loss_forget = lm_loss(model, batch)
-                loss_dist = (sum(routing_distance(recorder.probs[l], batch["attention_mask"], e)
-                                 for l, e in targets.items()) / len(targets)) if targets else 0.0
+                # each router may sit on another GPU with device_map="auto"
+                dists = [routing_distance(recorder.probs[l], batch["attention_mask"], e).to(loss_forget.device)
+                         for l, e in targets.items()] if targets else []
+                loss_dist = sum(dists) / len(dists) if dists else 0.0
             if args.method == "neggrad_plus":
                 loss = lm_loss(model, to_device(next(retain_iter), device)) - args.beta * loss_forget
             else:

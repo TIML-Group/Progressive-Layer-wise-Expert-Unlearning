@@ -143,7 +143,7 @@ def main():
                 loss_retain = lm_loss(model, to_device(next(retain_iter), device))
                 with RouterRecorder(model, [l]) as recorder:
                     loss_forget = lm_loss(model, batch)
-                    loss_dist = routing_distance(recorder.probs[l], batch["attention_mask"], [e])
+                    loss_dist = routing_distance(recorder.probs[l], batch["attention_mask"], [e]).to(loss_forget.device)
                 acc.backward(loss_retain - args.beta * loss_forget + args.alpha * loss_dist,
                              last=step == len(loader))
         t_best, table = select_t(model, curve, t_grid, holdout_f, holdout_r, args.retain_tol)

@@ -49,6 +49,16 @@ def patch_transformers_compat():
         DynamicCache.get_usable_length = get_usable_length
 
 
+def _dtype_kwarg():
+    import transformers
+    from packaging import version
+
+    return "dtype" if version.parse(transformers.__version__) >= version.parse("4.56") else "torch_dtype"
+
+
+DTYPE_KWARG = _dtype_kwarg()
+
+
 def load_model_and_tokenizer(model_path, device_map="auto", dtype=torch.bfloat16):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -61,8 +71,8 @@ def load_model_and_tokenizer(model_path, device_map="auto", dtype=torch.bfloat16
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
         trust_remote_code=True,
-        torch_dtype=dtype if torch.cuda.is_available() else torch.float32,
         device_map=device_map,
+        **{DTYPE_KWARG: dtype if torch.cuda.is_available() else torch.float32},
     )
     if device_map is None and torch.cuda.is_available():
         model.to("cuda")
