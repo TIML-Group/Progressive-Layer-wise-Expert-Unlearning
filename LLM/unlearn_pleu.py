@@ -5,7 +5,9 @@ unlearned sequentially (shallow to deep). At layer l the target expert follows a
 Bezier curve between its original weights and those of the pre-unlearned endpoint
 (NegGrad+ by default), and the control point plus the router of layer l minimize
 E_t[L(D_r) - beta L(D_match^(l))] + alpha L_dist. The point t^(l) is chosen on held-out
-forget/retain text and written into the model before the next layer.
+forget/retain text and written into the model before the next layer. beta is MCU's adaptive
+penalty on the batch next-token accuracies; without a retrained LLM, its references are the
+accuracies of the endpoint on the forget / retain texts.
 
     python unlearn_baseline.py --model deepseek --forget-dataset wmdp --method neggrad_plus  # endpoint
     python unlearn_pleu.py --model deepseek --forget-dataset wmdp
@@ -18,11 +20,13 @@ import torch
 from tqdm import tqdm
 
 from pleu_llm.common import (
-    Timer, add_common_args, endpoint_tensors, new_parser, run_dir, save_delta, set_seed, write_results,
+    Timer, add_common_args, endpoint_tensors, new_parser, run_dir, save_delta, set_seed,
+    with_checkpoint_weights, write_results,
 )
 from pleu_llm.curve import ParamCurve
 from pleu_llm.data import (
-    IndexedSubset, TextDataset, cycle, forget_and_retain_texts, lm_loss, make_loader, split_holdout, to_device,
+    IndexedSubset, TextDataset, cycle, forget_and_retain_texts, lm_loss_and_accuracy, make_loader,
+    split_holdout, to_device, token_accuracy,
 )
 from pleu_llm.evaluation import add_eval_args, evaluate_fe_ut
 from pleu_llm.masks import mean_gradients, sepo_mask
@@ -31,7 +35,7 @@ from pleu_llm.modeling import (
     resolve_model_path, router_param_names, routing_distance,
 )
 from pleu_llm.routing import assign_samples, layer_targets, mean_loss, sample_routing_weights, select_t
-from pleu_llm.training import Accumulator
+from pleu_llm.training import Accumulator, add_beta_args, current_beta
 
 ABLATIONS = ("none", "no_lteu", "no_idff", "no_sepo")
 
@@ -42,7 +46,7 @@ def add_curve_args(parser, lr, epochs):
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--num-epochs", type=int, default=epochs)
     parser.add_argument("--max-grad-norm", type=float, default=1.0)
-    parser.add_argument("--beta", type=float, default=0.5, help="Unlearning penalty in the curve objective")
+    add_beta_args(parser)
     parser.add_argument("--retain-fraction", type=float, default=0.5, help="Share of the retain texts used")
     parser.add_argument("--k-r", type=float, default=0.1)
     parser.add_argument("--k-f", type=float, default=0.5)
@@ -59,6 +63,25 @@ def prepare_texts(args):
     retain, retain_holdout = split_holdout(retain, args.holdout, args.seed + 1)
     retain = random.Random(args.seed).sample(retain, max(1, int(len(retain) * args.retain_fraction)))
     return forget, retain, forget_holdout, retain_holdout
+
+
+def beta_references(args, model, base_path, tokenizer, forget_set, retain_set):
+    """(retain, forget) next-token accuracy references of the adaptive beta. LLMs have no
+    retrained model, so they are measured on the pre-unlearned endpoint (as the authors'
+    CIFAR-100 MCU script does without explicit references), unless given on the command line."""
+    if args.beta_mode == "fixed":
+        return None
+    retain_base, forget_base = args.retain_base, args.forget_base
+    if retain_base is None or forget_base is None:
+        device = input_device(model)
+        loader = lambda data: make_loader(data, tokenizer, args.batch_size, False)  # noqa: E731
+        measured = with_checkpoint_weights(model, base_path, args.endpoint, lambda: (
+            token_accuracy(model, loader(retain_set), device, args.ref_max_batches),
+            token_accuracy(model, loader(forget_set), device, args.ref_max_batches)))
+        retain_base = measured[0] if retain_base is None else retain_base
+        forget_base = measured[1] if forget_base is None else forget_base
+    print(f"adaptive beta references | retain {retain_base:.2f} | forget {forget_base:.2f}")
+    return retain_base, forget_base
 
 
 def main():
@@ -88,6 +111,7 @@ def main():
     holdout_f, holdout_r = batches(forget_holdout), batches(retain_holdout)
     model.eval()
     base_retain = mean_loss(model, holdout_r)  # retain-loss reference of the original model for every t^(l)
+    refs = beta_references(args, model, base_path, tokenizer, forget_set, retain_set)
 
     # ---- LTEU + IDFF on the original model
     layers = {layer.layer_idx: layer for layer in moe_layers(model)}
@@ -138,18 +162,21 @@ def main():
         acc = Accumulator(params, optimizer, None, args.grad_accum_steps, args.max_grad_norm)
         loader = make_loader(IndexedSubset(forget_set, assignment[l]), tokenizer, args.batch_size, True)
         model.train()
+        betas = []
         for epoch in range(args.num_epochs):
             for step, batch in enumerate(tqdm(loader, desc=f"layer {l} epoch {epoch + 1}", leave=False), start=1):
                 curve.set_t(random.random())
                 batch = to_device(batch, device)
-                loss_retain = lm_loss(model, to_device(next(retain_iter), device))
+                loss_retain, acc_retain = lm_loss_and_accuracy(model, to_device(next(retain_iter), device))
                 with RouterRecorder(model, [l]) as recorder:
-                    loss_forget = lm_loss(model, batch)
+                    loss_forget, acc_forget = lm_loss_and_accuracy(model, batch)
                     loss_dist = routing_distance(recorder.probs[l], batch["attention_mask"], [e]).to(loss_forget.device)
-                acc.backward(loss_retain - args.beta * loss_forget + args.alpha * loss_dist,
+                betas.append(current_beta(args, acc_retain, acc_forget, refs))
+                acc.backward(loss_retain.to(loss_forget.device) - betas[-1] * loss_forget + args.alpha * loss_dist,
                              last=step == len(loader))
         t_best, table = select_t(model, curve, t_grid, holdout_f, holdout_r, args.retain_tol, base_retain)
-        stats[l].update({"t": t_best, "t_selection": table, "num_trainable": curve.num_trainable()})
+        stats[l].update({"t": t_best, "t_selection": table, "num_trainable": curve.num_trainable(),
+                         "mean_beta": sum(betas) / max(len(betas), 1)})
         curve.bake(t_best)
         for param in routers:
             param.requires_grad_(False)
@@ -160,7 +187,7 @@ def main():
     changed = {n: p for n, p in model.named_parameters() if n in keep}
     save_delta(out_dir, base_path, changed, method=name, endpoint=args.endpoint, layer_targets=dict(targets))
     results = {"time_min": minutes, "num_unassigned": len(unassigned), "base_retain_loss": base_retain,
-               "layers": stats, "checkpoint": str(out_dir)}
+               "beta_references": refs, "layers": stats, "checkpoint": str(out_dir)}
     if not args.skip_eval:
         results.update(evaluate_fe_ut(model, tokenizer, args))
     write_results(out_dir / "results.json", name, args, results)

@@ -9,8 +9,11 @@
 4. MCUE   unlearn the layers sequentially, shallow to deep: a masked Bezier curve between
           the original and the pre-unlearned (NegGrad+) expert, with the control point and
           the layer's router trained on  E_t[L(D_r) - beta L(D_match^(l))] + alpha L_dist.
-          t^(l) is chosen on a grid and baked into the model before the next layer.
+          beta is MCU's adaptive penalty with the RT accuracies as references; t^(l) is chosen
+          on a grid and baked into the model before the next layer.
 
+    python train.py --retain-only --split-mode class     # RT (beta references)
+    python unlearn_baseline.py --method neggrad_plus --split-mode class   # endpoint
     python unlearn_pleu.py --split-mode class
     python unlearn_pleu.py --split-mode class --ablation no_lteu   # random expert per layer
     python unlearn_pleu.py --split-mode class --ablation no_idff   # whole forget set at every layer
@@ -184,7 +187,7 @@ def main():
     timer = Timer()
     model = load_model(args, args.origin_path, device)
     endpoint = load_model(args, args.endpoint_path, device)
-    refs = beta_references(args, compute_metrics(endpoint, eval_loaders, device, args.select_max_batches))
+    refs = beta_references(args)
     endpoint_state = clone_state(endpoint)
     del endpoint
     for param in model.parameters():

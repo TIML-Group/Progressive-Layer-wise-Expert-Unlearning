@@ -20,14 +20,15 @@ plus the relearning attack. Install with `pip install -r requirements.txt` insid
 cd CV
 python prepare_splits.py --dataset cifar100          # class-wise and random 10% splits
 python train.py --dataset cifar100                   # original model
+python train.py --retain-only --split-mode class     # RT, also the reference of the adaptive β
 python unlearn_baseline.py --split-mode class --method neggrad_plus   # also the PLEU endpoint
 python unlearn_pleu.py --split-mode class
 python relearn.py --split-mode class --method pleu --trace
 python summarize.py --split-mode class
 ```
 
-Other methods: `train.py --retain-only` (RT), `unlearn_baseline.py --method ga [--seuf]`,
-`unlearn_mcu.py`, `unlearn_pleu.py --ablation no_lteu|no_idff|no_sepo`.
+Other methods: `unlearn_baseline.py --method ga [--seuf]`, `unlearn_mcu.py`,
+`unlearn_pleu.py --ablation no_lteu|no_idff|no_sepo`.
 `bash scripts/run_all.sh cifar100 "42 43 44"` runs everything.
 Data go to `CV/data` (`imagenet100/`, `data_re/` for relearning), results to `CV/outputs`.
 
@@ -54,6 +55,10 @@ GPUs (bf16 model ≈ 30 GB):
 | PLEU, SEUF, evaluation | 1 |
 | GA / NegGrad+ / relearning (all parameters) | 2–4 |
 | MCU | 4 |
+
+As in the paper, PLEU and MCU use MCU's adaptive β (0 / 0.01 / 0.5 from the batch accuracies). The
+references are the RT accuracies for CV; LLMs have no RT, so they use the next-token accuracies of the
+NegGrad+ endpoint (`--beta-mode fixed --beta 0.15` turns it off).
 
 PLEU only needs the NegGrad+ checkpoint as its endpoint; it reads the target experts from it and
 trains one expert at a time, so it runs on a single GPU.

@@ -52,6 +52,14 @@ def test_sepo_mask_protects_retain_entries():
     assert stats["num_active"] == 1
 
 
+def test_adaptive_beta_follows_mcu():
+    from pleu_cv.unlearn import adaptive_beta
+
+    assert adaptive_beta(90.0, 0.0, 80.0, 0.0, 0.01, 0.5) == 0.0      # forget reached its reference
+    assert adaptive_beta(90.0, 10.0, 80.0, 9.5, 0.01, 0.5) == 0.01    # forget gap 5% < retain gap 12.5%
+    assert adaptive_beta(70.0, 30.0, 80.0, 9.5, 0.01, 0.5) == 0.5     # retain below its reference
+
+
 def test_routing_distance_zero_at_target():
     probs = torch.tensor([[[0.0, 1.0, 0.0]]])
     assert routing_distance(probs, [1]).item() == 0.0
@@ -83,6 +91,7 @@ def test_pipeline(tmp_path, monkeypatch):
     run("train.py", "--epochs", "1", "--warmup-epochs", "0", *tiny, tmp=tmp_path)
     for split in ("class", "random"):
         common = ["--split-mode", split, *tiny]
+        run("train.py", "--retain-only", "--epochs", "1", "--warmup-epochs", "0", *common, tmp=tmp_path)
         run("unlearn_baseline.py", "--method", "neggrad_plus", "--epochs", "1", *common, tmp=tmp_path)
         run("unlearn_baseline.py", "--method", "ga", "--seuf", "--epochs", "1", *common, tmp=tmp_path)
         run("unlearn_mcu.py", "--epochs", "1", "--eval-num-points", "2", *common, tmp=tmp_path)

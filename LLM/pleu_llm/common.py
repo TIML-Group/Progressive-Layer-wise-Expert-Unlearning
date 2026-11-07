@@ -130,6 +130,37 @@ def load_any(path_or_model, args, device_map=None):
     return model, tokenizer
 
 
+@torch.no_grad()
+def with_checkpoint_weights(model, base_path, path, fn):
+    """Return ``fn()`` evaluated with the tensors of checkpoint ``path`` written into ``model``
+    (loaded from ``base_path``); the base weights are then read back from ``base_path``.
+    One tensor at a time, so no second copy of the model is held."""
+    from safetensors import safe_open
+
+    params = dict(model.named_parameters())
+    delta = str(Path(path) / "delta.safetensors")
+    with safe_open(delta, framework="pt", device="cpu") as handle:
+        names = [k for k in handle.keys() if k in params]
+    wanted, source = set(names), {}
+    for shard in sorted(Path(base_path).glob("*.safetensors")):
+        with safe_open(str(shard), framework="pt", device="cpu") as handle:
+            source.update({k: shard for k in handle.keys() if k in wanted})
+    backup = {n: params[n].detach().to("cpu", copy=True) for n in names if n not in source}
+    try:
+        with safe_open(delta, framework="pt", device="cpu") as handle:
+            for n in names:
+                params[n].copy_(handle.get_tensor(n).to(params[n].device, params[n].dtype))
+        return fn()
+    finally:
+        for shard in sorted(set(source.values())):
+            with safe_open(str(shard), framework="pt", device="cpu") as handle:
+                for n in names:
+                    if source.get(n) == shard:
+                        params[n].copy_(handle.get_tensor(n).to(params[n].device, params[n].dtype))
+        for n, value in backup.items():
+            params[n].copy_(value.to(params[n].device))
+
+
 def endpoint_tensors(path, names=None):
     """Tensors of a pre-unlearned endpoint on CPU: the requested names (all if None).
     Tensors the endpoint did not change come from its base model."""

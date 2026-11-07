@@ -1,6 +1,11 @@
 """Pieces shared by the unlearning scripts."""
 
+import json
+from pathlib import Path
+
 import torch
+
+from .common import results_dir
 
 
 def cycle(loader):
@@ -20,8 +25,10 @@ def relative_gap(current, base):
 
 
 def adaptive_beta(retain_acc, forget_acc, retain_base, forget_base, beta_low, beta_high):
-    """MCU's adaptive unlearning penalty: stop pushing once the forget accuracy reaches its
-    reference, push weakly when retain accuracy lags more than forget accuracy exceeds."""
+    """Adaptive unlearning penalty of MCU (``training_step_dynamic`` of the official code):
+    0 once the batch forget accuracy reaches its reference, ``beta_low`` while the forget
+    accuracy is relatively closer to its reference than the retain accuracy is to its own,
+    ``beta_high`` otherwise."""
     if forget_acc <= forget_base:
         return 0.0
     if relative_gap(forget_acc, forget_base) < relative_gap(retain_acc, retain_base):
@@ -30,24 +37,36 @@ def adaptive_beta(retain_acc, forget_acc, retain_base, forget_base, beta_low, be
 
 
 def add_beta_args(parser, beta=0.15):
+    """MCU defaults: adaptive beta in {0, 0.01, 0.5}; 0.15 when fixed."""
     parser.add_argument("--beta-mode", default="adaptive", choices=["adaptive", "fixed"])
     parser.add_argument("--beta", type=float, default=beta, help="Fixed unlearning penalty")
     parser.add_argument("--beta-low", type=float, default=0.01)
     parser.add_argument("--beta-high", type=float, default=0.5)
+    parser.add_argument("--rt-results", type=Path, default=None,
+                        help="Result file of the retrained model (default: results/rt_<split>_s<seed>.json)")
     parser.add_argument("--retain-base", type=float, default=None,
-                        help="Adaptive beta retain reference (default: endpoint model train RA)")
+                        help="Retain accuracy reference (default: RT train RA)")
     parser.add_argument("--forget-base", type=float, default=None,
-                        help="Adaptive beta forget reference (default: 0 class-wise, endpoint train FA random)")
+                        help="Forget accuracy reference (default: 0 class-wise, RT test accuracy random)")
 
 
-def beta_references(args, endpoint_metrics):
-    retain_base = args.retain_base if args.retain_base is not None else endpoint_metrics["retain_train_acc"]
-    if args.forget_base is not None:
-        forget_base = args.forget_base
-    elif args.split_mode == "class":
+def beta_references(args):
+    """MCU alignment principle: the references are the accuracies of the retrained model,
+    i.e. RT train RA, and forget accuracy 0 (class-wise) or RT test accuracy (random)."""
+    if args.beta_mode == "fixed":
+        return None
+    retain_base, forget_base = args.retain_base, args.forget_base
+    if forget_base is None and args.split_mode == "class":
         forget_base = 0.0
-    else:
-        forget_base = endpoint_metrics["forget_train_acc"]
+    if retain_base is None or forget_base is None:
+        path = args.rt_results or results_dir(args) / f"rt_{args.split_mode}_s{args.seed}.json"
+        if not Path(path).exists():
+            raise FileNotFoundError(f"{path} not found: train RT first (train.py --retain-only --split-mode "
+                                    f"{args.split_mode} --seed {args.seed}) or pass --retain-base/--forget-base")
+        rt = json.loads(Path(path).read_text(encoding="utf-8"))["metrics"]
+        retain_base = rt["retain_train_acc"] if retain_base is None else retain_base
+        forget_base = rt["full_test_acc"] if forget_base is None else forget_base
+    print(f"adaptive beta references | retain {retain_base:.2f} | forget {forget_base:.2f}")
     return retain_base, forget_base
 
 

@@ -2,7 +2,8 @@
 
 Every weight that differs between the original model and the pre-unlearned endpoint
 (full-model NegGrad+ by default, i.e. every weight) is put on a quadratic Bezier curve;
-the MCU tensor mask decides which control points are trained on E_t[L(D_r) - beta L(D_f)].
+the MCU tensor mask decides which control points are trained on E_t[L(D_r) - beta L(D_f)]
+with MCU's adaptive beta (references: next-token accuracies of the endpoint).
 Start, end and control point of the whole model are held at once (plus gradients and
 momentum of the selected half), about 6-7x the bf16 model size, so spread it over the GPUs
 of a node with ``--device-map auto``; ``--mid-dtype bfloat16`` halves the control point.
@@ -19,13 +20,13 @@ from pleu_llm.common import (
     Timer, add_common_args, endpoint_tensors, new_parser, run_dir, save_delta, set_seed, write_results,
 )
 from pleu_llm.curve import ParamCurve
-from pleu_llm.data import TextDataset, cycle, lm_loss, make_loader, to_device
+from pleu_llm.data import TextDataset, cycle, lm_loss_and_accuracy, make_loader, to_device
 from pleu_llm.evaluation import add_eval_args, evaluate_fe_ut
 from pleu_llm.masks import mcu_tensor_mask, mean_gradients
 from pleu_llm.modeling import input_device, load_model_and_tokenizer, resolve_model_path
 from pleu_llm.routing import select_t
-from pleu_llm.training import Accumulator
-from unlearn_pleu import add_curve_args, prepare_texts
+from pleu_llm.training import Accumulator, current_beta
+from unlearn_pleu import add_curve_args, beta_references, prepare_texts
 
 
 @torch.no_grad()
@@ -60,6 +61,7 @@ def main():
 
     forget_set = TextDataset(forget, tokenizer, args.cutoff_len)
     retain_set = TextDataset(retain, tokenizer, args.cutoff_len)
+    refs = beta_references(args, model, base_path, tokenizer, forget_set, retain_set)
     curve_names = list(end)
     grad = lambda data, desc: mean_gradients(  # noqa: E731
         model, make_loader(data, tokenizer, args.batch_size, False), curve_names, args.mask_max_batches, desc,
@@ -79,12 +81,14 @@ def main():
     retain_iter = cycle(make_loader(retain_set, tokenizer, args.batch_size, True))
     forget_loader = make_loader(forget_set, tokenizer, args.batch_size, True)
     model.train()
+    betas = []
     for epoch in range(args.num_epochs):
         for step, batch in enumerate(tqdm(forget_loader, desc=f"MCU epoch {epoch + 1}"), start=1):
             curve.set_t(random.random())
-            loss = (lm_loss(model, to_device(next(retain_iter), device))
-                    - args.beta * lm_loss(model, to_device(batch, device)))
-            acc.backward(loss, last=step == len(forget_loader))
+            loss_retain, acc_retain = lm_loss_and_accuracy(model, to_device(next(retain_iter), device))
+            loss_forget, acc_forget = lm_loss_and_accuracy(model, to_device(batch, device))
+            betas.append(current_beta(args, acc_retain, acc_forget, refs))
+            acc.backward(loss_retain.to(loss_forget.device) - betas[-1] * loss_forget, last=step == len(forget_loader))
 
     holdout = lambda texts: list(make_loader(TextDataset(texts, tokenizer, args.cutoff_len),  # noqa: E731
                                              tokenizer, args.batch_size, False))
@@ -94,7 +98,8 @@ def main():
     minutes = timer.minutes()
     print(f"MCU t={t_best:.2f} | {minutes:.1f} min")
     save_delta(out_dir, base_path, changed, method="mcu", endpoint=args.endpoint, t=t_best)
-    results = {"time_min": minutes, "t": t_best, "t_selection": table, "mask": mask_stats, "checkpoint": str(out_dir)}
+    results = {"time_min": minutes, "t": t_best, "t_selection": table, "mask": mask_stats, "beta_references": refs,
+               "mean_beta": sum(betas) / max(len(betas), 1), "checkpoint": str(out_dir)}
     if not args.skip_eval:
         results.update(evaluate_fe_ut(model, tokenizer, args))
     write_results(out_dir / "results.json", "mcu", args, results)

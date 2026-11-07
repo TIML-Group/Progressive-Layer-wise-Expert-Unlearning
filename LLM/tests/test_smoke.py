@@ -129,6 +129,14 @@ def test_idff_assignment():
     assert every == {1: [0, 1, 2], 3: [0, 1, 2]} and rest == []
 
 
+def test_adaptive_beta_follows_mcu():
+    from pleu_llm.training import adaptive_beta
+
+    assert adaptive_beta(60.0, 20.0, 50.0, 25.0, 0.01, 0.5) == 0.0
+    assert adaptive_beta(60.0, 26.0, 50.0, 25.0, 0.01, 0.5) == 0.01
+    assert adaptive_beta(45.0, 40.0, 50.0, 25.0, 0.01, 0.5) == 0.5
+
+
 def test_scorer_and_curve(tmp_path):
     from pleu_llm.curve import ParamCurve
     from pleu_llm.evaluation import Scorer
@@ -147,6 +155,13 @@ def test_scorer_and_curve(tmp_path):
     end = original + 1.0
     mask = torch.zeros_like(original, dtype=torch.bool)
     mask[0] = True
+    from pleu_llm.common import save_delta, with_checkpoint_weights
+
+    save_delta(tmp_path / "endpoint", tmp_path, {name: end})
+    seen = with_checkpoint_weights(model, tmp_path, tmp_path / "endpoint",
+                                   lambda: dict(model.named_parameters())[name].detach().clone())
+    assert torch.equal(seen, end) and torch.equal(dict(model.named_parameters())[name], original)
+
     curve = ParamCurve(model, {name: end}, masks={name: mask})
     curve.bake(1.0)
     baked = dict(model.named_parameters())[name]

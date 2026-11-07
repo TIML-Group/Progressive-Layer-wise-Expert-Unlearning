@@ -37,6 +37,44 @@ def build_optimizer(params, args, steps_per_epoch):
     return optimizer, scheduler
 
 
+def add_beta_args(parser, beta=0.15):
+    """MCU defaults: adaptive beta in {0, 0.01, 0.5}; 0.15 when fixed."""
+    parser.add_argument("--beta-mode", default="adaptive", choices=["adaptive", "fixed"])
+    parser.add_argument("--beta", type=float, default=beta, help="Fixed unlearning penalty")
+    parser.add_argument("--beta-low", type=float, default=0.01)
+    parser.add_argument("--beta-high", type=float, default=0.5)
+    parser.add_argument("--retain-base", type=float, default=None,
+                        help="Retain next-token accuracy reference (default: endpoint model on the retain texts)")
+    parser.add_argument("--forget-base", type=float, default=None,
+                        help="Forget next-token accuracy reference (default: endpoint model on the forget texts)")
+    parser.add_argument("--ref-max-batches", type=int, default=None,
+                        help="Batches per set used to measure the endpoint references (default: all)")
+
+
+def relative_gap(current, base):
+    if abs(base) < 1e-8:
+        return 0.0 if current <= base else float("inf")
+    return (current - base) / base
+
+
+def adaptive_beta(retain_acc, forget_acc, retain_base, forget_base, beta_low, beta_high):
+    """Adaptive unlearning penalty of MCU (``training_step_dynamic`` of the official code):
+    0 once the batch forget accuracy reaches its reference, ``beta_low`` while the forget
+    accuracy is relatively closer to its reference than the retain accuracy is to its own,
+    ``beta_high`` otherwise."""
+    if forget_acc <= forget_base:
+        return 0.0
+    if relative_gap(forget_acc, forget_base) < relative_gap(retain_acc, retain_base):
+        return beta_low
+    return beta_high
+
+
+def current_beta(args, retain_acc, forget_acc, refs):
+    if args.beta_mode == "fixed":
+        return args.beta
+    return adaptive_beta(retain_acc, forget_acc, refs[0], refs[1], args.beta_low, args.beta_high)
+
+
 class Accumulator:
     """Gradient accumulation with clipping; skips non-finite losses."""
 

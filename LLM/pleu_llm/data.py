@@ -137,6 +137,36 @@ def lm_loss(model, batch):
                  labels=batch["labels"], use_cache=False).loss
 
 
+def _correct_tokens(logits, labels):
+    labels = labels[:, 1:].to(logits.device)
+    keep = labels != -100
+    return int((logits[:, :-1].argmax(dim=-1)[keep] == labels[keep]).sum()), int(keep.sum())
+
+
+def lm_loss_and_accuracy(model, batch):
+    """LM loss and next-token accuracy (%) of a batch: the accuracy MCU's adaptive beta reads."""
+    out = model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"],
+                labels=batch["labels"], use_cache=False)
+    with torch.no_grad():
+        correct, total = _correct_tokens(out.logits, batch["labels"])
+    return out.loss, 100.0 * correct / max(total, 1)
+
+
+@torch.no_grad()
+def token_accuracy(model, loader, device, max_batches=None):
+    """Next-token accuracy (%) over all target tokens of ``loader``."""
+    model.eval()
+    correct = total = 0
+    for idx, batch in enumerate(loader):
+        if max_batches is not None and idx >= max_batches:
+            break
+        batch = to_device(batch, device)
+        logits = model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"], use_cache=False).logits
+        c, n = _correct_tokens(logits, batch["labels"])
+        correct, total = correct + c, total + n
+    return 100.0 * correct / max(total, 1)
+
+
 def split_holdout(texts, holdout, seed):
     """Deterministic (train, held-out) split used for curve-point selection."""
     generator = torch.Generator().manual_seed(seed)

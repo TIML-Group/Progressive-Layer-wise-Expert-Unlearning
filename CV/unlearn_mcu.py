@@ -2,8 +2,10 @@
 
 A quadratic Bezier curve connects the original model and a pre-unlearned endpoint
 (NegGrad+ by default). The control point of the tensors selected by the MCU mask is
-trained with  E_t[ L(D_r) - beta * L(D_f) ],  and t is picked on a grid.
+trained with  E_t[ L(D_r) - beta * L(D_f) ] (MCU's adaptive beta, references from RT), and t is
+picked on a grid.
 
+    python train.py --retain-only --split-mode class                      # RT (beta references)
     python unlearn_baseline.py --method neggrad_plus --split-mode class   # endpoint
     python unlearn_mcu.py --split-mode class
 """
@@ -53,9 +55,7 @@ def main():
     timer = Timer()
     model = load_model(args, args.origin_path, device)
     endpoint = load_model(args, args.endpoint_path, device)
-    endpoint_metrics = compute_metrics(endpoint, eval_loaders, device, args.select_max_batches)
-    refs = beta_references(args, endpoint_metrics)
-    print(f"endpoint | {format_metrics(endpoint_metrics)}")
+    refs = beta_references(args)
 
     names = [name for name, _ in model.named_parameters()]
     grad_loader = lambda data: make_loader(data, args.eval_batch_size, args.num_workers)  # noqa: E731
